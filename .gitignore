@@ -1,0 +1,30 @@
+# Environment variables
+.env
+.env.example
+.env.local
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# macOS
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Model files
+embeddings/models/
+
+# Uploads
+uploads/
+test_resumes/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
