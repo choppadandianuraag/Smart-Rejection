@@ -41,3 +41,9 @@ uuid>=1.30
 fastapi>=0.110.0
 uvicorn>=0.27.0
 python-multipart>=0.0.9
+
+
+# to load env
+dotenv>=1.0.0
+langchain-groq
+scikit-learn

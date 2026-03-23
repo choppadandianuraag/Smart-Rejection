@@ -11,8 +11,12 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Get the project root directory (parent of config folder)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_FILE = PROJECT_ROOT / ".env"
+
+# Load environment variables from .env file using absolute path
+load_dotenv(ENV_FILE)
 
 
 class Settings(BaseSettings):
@@ -25,6 +29,9 @@ class Settings(BaseSettings):
     
     # Hugging Face Configuration
     hf_token: Optional[str] = Field(None, env="HF_TOKEN")
+
+    # Groq Configuration (for LLM-based ATS ranking)
+    groq_api_key: Optional[str] = Field(None, env="GROQ_API_KEY")
     
     # Model Configuration
     model_name: str = Field(
@@ -45,9 +52,10 @@ class Settings(BaseSettings):
     supported_formats: list = [".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg"]
     
     class Config:
-        env_file = ".env"
+        env_file = str(ENV_FILE)
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"  # Ignore extra env vars not defined in the model
 
 
 def get_settings() -> Settings:
