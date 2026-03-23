@@ -3,6 +3,7 @@ ATS Resume Ranking System
 Implements weighted scoring based on JD keyword matching with LLM extraction.
 """
 
+import os
 import sys
 import json
 from pathlib import Path
@@ -501,7 +502,7 @@ Rules:
         jd_experience = jd_requirements.get("experience", {})
         jd_education = jd_requirements.get("education", {})
         
-        print(f"\n📋 JD REQUIREMENTS EXTRACTED:")
+        print(f"\n[JD] REQUIREMENTS EXTRACTED:")
         print(f"  Skills:")
         print(f"    - Must Have: {len(jd_skills.get('must_have', []))} items")
         print(f"    - Good to Have: {len(jd_skills.get('good_to_have', []))} items")
@@ -551,73 +552,85 @@ Rules:
                 "skills_found": score_result["resume_profile"]["skills_found"],
                 "job_titles": score_result["resume_profile"]["job_titles"]
             })
-        
+
         # Sort by ATS score
         rankings.sort(key=lambda x: x["ats_score"], reverse=True)
-        
+
         return rankings[:top_k]
+
+    def fetch_job_descriptions(self) -> List[Dict[str, Any]]:
+        """
+        Fetch all job descriptions from the database.
+
+        Returns:
+            List of job description records
+        """
+        result = self.db._client.table("job_descriptions").select(
+            "id, title, company, location, description, requirements"
+        ).execute()
+
+        return result.data if result.data else []
+
+    def get_job_description_text(self, jd_record: Dict[str, Any]) -> str:
+        """
+        Combine job description fields into a single text for analysis.
+
+        Args:
+            jd_record: Job description record from database
+
+        Returns:
+            Combined job description text
+        """
+        parts = []
+
+        if jd_record.get("title"):
+            parts.append(f"Job Title: {jd_record['title']}")
+
+        if jd_record.get("company"):
+            parts.append(f"Company: {jd_record['company']}")
+
+        if jd_record.get("location"):
+            parts.append(f"Location: {jd_record['location']}")
+
+        if jd_record.get("description"):
+            parts.append(f"\nJob Description:\n{jd_record['description']}")
+
+        if jd_record.get("requirements"):
+            parts.append(f"\nRequirements:\n{jd_record['requirements']}")
+
+        return "\n".join(parts)
 
 
 def main():
-    job_description = """
-Key Responsibilities
-
-Design, develop, and deploy machine learning models to solve real-world business problems
-Perform exploratory data analysis (EDA) and statistical analysis on large datasets
-Collaborate with the engineering team to integrate ML models into production systems
-Build and maintain data pipelines for model training and evaluation
-Communicate findings and insights to both technical and non-technical stakeholders
-Monitor and optimize the performance of deployed models over time
-Stay updated with the latest trends and techniques in machine learning and AI
-
-
-Required Experience: 3-5 years of experience in data science or machine learning roles
-
-
-Must Have (Required Skills)
-
-Strong proficiency in Python (NumPy, Pandas, Scikit-learn)
-Solid understanding of Machine Learning algorithms (Supervised & Unsupervised)
-Experience with SQL and relational databases
-Hands-on experience with data preprocessing, feature engineering, and model evaluation
-Good understanding of statistical concepts (hypothesis testing, probability, distributions)
-Experience working with cloud platforms (AWS / GCP / Azure)
-Strong analytical and problem-solving skills
-Bachelor's degree or above in Computer Science, Statistics, or a related field
-
-
-Good to Have (Preferred Skills)
-
-Experience with Deep Learning frameworks (TensorFlow / PyTorch)
-Familiarity with NLP (Natural Language Processing) techniques
-Experience with big data tools (Apache Spark, Hadoop)
-Knowledge of MLOps practices and tools (MLflow, Docker, Kubernetes)
-Experience with data visualization tools (Tableau / Power BI / Matplotlib)
-Exposure to A/B testing and experimentation frameworks
-Experience working in an agile/scrum environment
-Master's degree preferred
-
-
-Nice to Have (Bonus Skills)
-
-Open source contributions in data science or ML
-Experience with Recommendation Systems or Computer Vision
-Knowledge of cloud-native ML services (AWS SageMaker, Google Vertex AI)
-Published research papers or blog posts in data science or AI
-Experience with API development and model serving (FastAPI, Flask)
-Familiarity with Git and version control systems
-"""
-
     print("=" * 70)
-    print("🎯 ATS RESUME RANKING SYSTEM (Enhanced)")
+    print("[*] ATS RESUME RANKING SYSTEM (Enhanced)")
     print("   Scoring: Skills (60%) + Experience (25%) + Education (15%)")
     print("=" * 70)
-    
+
     ranker = ATSRankingSystem()
+
+    # Fetch job descriptions from database
+    print("\nFetching job descriptions from database...")
+    job_descriptions = ranker.fetch_job_descriptions()
+
+    if not job_descriptions:
+        print("ERROR: No job descriptions found in database!")
+        print("Please add a job description to the 'job_descriptions' table first.")
+        return
+
+    # Use the first (or most recent) job description
+    jd_record = job_descriptions[0]
+    job_description = ranker.get_job_description_text(jd_record)
+
+    print(f"[JD] Using Job Description:")
+    print(f"  - Title: {jd_record.get('title', 'N/A')}")
+    print(f"  - Company: {jd_record.get('company', 'N/A')}")
+    print(f"  - Location: {jd_record.get('location', 'N/A')}")
+
     rankings = ranker.rank_all_resumes(job_description, top_k=15)
     
     print("\n" + "=" * 90)
-    print("🏆 TOP 15 CANDIDATES (COMPREHENSIVE ATS SCORES)")
+    print("[TOP] TOP 15 CANDIDATES (COMPREHENSIVE ATS SCORES)")
     print("=" * 90)
     print(f"{'Rank':<5} {'Filename':<22} {'ATS':<7} {'Skills':<8} {'Exp':<7} {'Edu':<7} {'Yrs':<5} {'Level':<10}")
     print("-" * 90)
@@ -631,14 +644,14 @@ Familiarity with Git and version control systems
     # Show top candidate details
     if rankings:
         print("\n" + "=" * 70)
-        print(f"📋 TOP CANDIDATE DETAILS: {rankings[0]['filename']}")
+        print(f"[DETAILS] TOP CANDIDATE DETAILS: {rankings[0]['filename']}")
         print("=" * 70)
-        print(f"🎯 ATS Score: {rankings[0]['ats_score']}/100")
-        print(f"📊 Component Scores:")
+        print(f"[SCORE] ATS Score: {rankings[0]['ats_score']}/100")
+        print(f"[BREAKDOWN] Component Scores:")
         print(f"   - Skills:     {rankings[0]['skills_score']}/100 (60% weight)")
         print(f"   - Experience: {rankings[0]['experience_score']}/100 (25% weight)")
         print(f"   - Education:  {rankings[0]['education_score']}/100 (15% weight)")
-        print(f"\n👤 Profile:")
+        print(f"\n[PROFILE] Profile:")
         print(f"   - Years of Experience: {rankings[0]['years_exp']}")
         print(f"   - Education Level: {rankings[0]['edu_level']}")
         print(f"   - Job Titles: {', '.join(rankings[0]['job_titles'][:3]) if rankings[0]['job_titles'] else 'N/A'}")
