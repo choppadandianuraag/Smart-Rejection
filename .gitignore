@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
 
 # macOS
 .DS_Store
@@ -22,6 +23,12 @@ embeddings/models/
 # Uploads
 uploads/
 test_resumes/
+
+# Local environments
+venv/
+
+# Archived legacy code
+archive_legacy/
 
 # IDE
 .vscode/

@@ -1,42 +1,76 @@
-# Smart Rejection - AI-Powered Resume Feedback System
+# Smart Rejection - AI-Powered Resume Screening System
+
+> 📘 **[View Complete Architecture & Flow →](ARCHITECTURE.md)**  
+> 📘 **[V2 Section-Aware System Documentation →](README_V2.md)**  
+> 📘 **[Migration Guide (V1→V2) →](MIGRATION_GUIDE.md)**
 
 ## Overview
 
-Smart Rejection is an intelligent system designed to transform the traditional job rejection process by providing applicants with detailed, actionable feedback on their resumes and applications.
+Smart Rejection is an intelligent resume screening system with **two parallel implementations**:
 
-## Current Features (Phase 1)
+- **V1 (Legacy)**: Whole-document hybrid TF-IDF + BERT embeddings
+- **V2 (Recommended)**: Section-aware pure BERT embeddings with explainable matching
 
-- **Resume Extraction**: Extract text from PDFs, DOCX, DOC, and image files
-- **OCR Processing**: Use NuMarkdown-8B-Thinking model for advanced document OCR
-- **Structured Data Parsing**: Automatically extract contact info, skills, education, and experience
-- **Database Storage**: Store extracted data in Supabase for efficient querying
+## Quick Navigation
 
-## Project Structure
+| What You Want | Go To |
+|---------------|-------|
+| Understand the entire system | **[ARCHITECTURE.md](ARCHITECTURE.md)** |
+| Use the new V2 system | **[README_V2.md](README_V2.md)** |
+| Migrate from V1 to V2 | **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** |
+| Run V1 legacy system | This file (below) |
+
+---
+
+## V1 Features (Legacy System)
+
+- **Resume Extraction**: Extract text from PDFs, DOCX, and images (OCR)
+- **OCR Processing**: NuMarkdown-8B-Thinking model for advanced document OCR
+- **Hybrid Embeddings**: 70% TF-IDF + 30% BERT for semantic matching
+- **LLM Ranking**: Groq API with Llama 3.3-70b for keyword extraction
+- **Database Storage**: Supabase with PostgreSQL backend
+
+## Project Structure (V1 - See ARCHITECTURE.md for complete structure)
 
 ```
 smart_rejection/
 ├── config/
-│   ├── __init__.py
-│   └── settings.py          # Configuration management
+│   └── settings.py          # Shared configuration
 ├── database/
-│   ├── __init__.py
-│   ├── models.py             # Pydantic data models
-│   ├── supabase_client.py    # Database operations
-│   └── schema.sql            # Supabase table schema
-├── extractors/
-│   ├── __init__.py
-│   ├── base.py               # Base extractor interface
-│   ├── pdf_extractor.py      # PDF text extraction
-│   ├── docx_extractor.py     # Word document extraction
-│   ├── ocr_extractor.py      # NuMarkdown OCR processing
-│   └── resume_processor.py   # Main processing orchestrator
-├── uploads/
-│   └── resumes/              # Default upload directory
-├── logs/                     # Application logs
-├── .env.example              # Environment template
-├── requirements.txt          # Python dependencies
-├── main.py                   # CLI entry point
-└── README.md
+│   ├── models.py            # V1 Pydantic models
+│   ├── supabase_client.py   # V1 database client
+│   ├── schema.sql           # V1 schema (single table)
+│   ├── models_v2.py         # V2 models
+│   ├── supabase_client_v2.py # V2 database client
+│   └── schema_v2.sql        # V2 schema (multi-table)
+├── extractors/              # Shared: Text extraction
+│   ├── base.py
+│   ├── pdf_extractor.py
+│   ├── docx_extractor.py
+│   ├── ocr_extractor.py
+│   └── resume_processor.py
+├── embeddings/              # V1 & V2 embedders
+│   ├── tfidf_embedder.py   # V1 only
+│   ├── bert_embedder.py    # V1 version
+│   ├── bert_embedder_v2.py # V2 version
+│   ├── hybrid_embedder.py  # V1 only
+│   ├── preprocessor.py     # V1 preprocessing
+│   └── embedding_service.py # V1 service
+├── segmentation/            # V2 only
+│   └── __init__.py         # Section segmentation
+├── main.py                  # V1 CLI
+├── main_v2.py              # V2 CLI (recommended)
+├── ats_ranking.py          # V1 LLM ranking
+├── rank_resumes.py         # V1 simple ranking
+├── generate_embeddings.py  # V1 batch embedder
+├── ingestion_pipeline_v2.py # V2 ingestion
+├── scoring_pipeline_v2.py  # V2 scoring
+├── quickstart_v2.py        # V2 examples
+├── ARCHITECTURE.md         # Complete system architecture
+├── README_V2.md            # V2 documentation
+└── MIGRATION_GUIDE.md      # V1→V2 migration
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for complete flow diagrams and file usage.
 ```
 
 ## Setup Instructions
