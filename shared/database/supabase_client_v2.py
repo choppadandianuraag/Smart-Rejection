@@ -243,7 +243,14 @@ class SupabaseClientV2:
             ).execute()
 
             if result.data:
-                return ApplicantEmbedding(**result.data[0])
+                row = result.data[0]
+                # Parse resume_embedding from string to list if needed
+                if row.get("resume_embedding") and isinstance(row["resume_embedding"], str):
+                    embedding_str = row["resume_embedding"]
+                    # Remove brackets and split
+                    embedding_str = embedding_str.strip("[]")
+                    row["resume_embedding"] = [float(x) for x in embedding_str.split(",") if x.strip()]
+                return ApplicantEmbedding(**row)
             return None
 
         except Exception as e:
