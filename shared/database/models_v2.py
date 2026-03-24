@@ -178,7 +178,7 @@ class MatchHistoryCreate(BaseModel):
     overall_score: Decimal
     section_scores: Dict[str, float] = Field(..., description="Individual section scores")
     config_name: str
-    weights_used: Dict[str, float]
+    weights_used: Dict[str, Any]  # Changed to Any to support nested dicts (ats_components)
 
 
 class MatchHistory(BaseModel):
@@ -189,7 +189,7 @@ class MatchHistory(BaseModel):
     overall_score: Decimal
     section_scores: Dict[str, float]
     config_name: str
-    weights_used: Dict[str, float]
+    weights_used: Dict[str, Any]  # Changed to Any to support nested dicts
     scored_at: datetime = Field(default_factory=datetime.utcnow)
     
     class Config:
