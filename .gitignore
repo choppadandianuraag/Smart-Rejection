@@ -36,3 +36,12 @@ archive_legacy/
 .idea/
 *.swp
 *.swo
+
+# Virtual environment
+venv/
+
+# ChromaDB storage
+chroma_db/
+
+# Archive
+archive_legacy/
