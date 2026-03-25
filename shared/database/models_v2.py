@@ -244,3 +244,31 @@ class ApplicantDetailResponse(BaseModel):
     needs_manual_review: bool
     review_reason: Optional[str]
     created_at: datetime
+
+
+class FeedbackEmailCreate(BaseModel):
+    """Model for creating a feedback email record."""
+    applicant_id: UUID
+    job_id: UUID
+    match_history_id: Optional[int] = None
+    subject: str
+    body: str
+    recipient_email: str
+    recipient_name: Optional[str] = None
+    match_score: Optional[Decimal] = None
+    llm_model: Optional[str] = None
+    generation_time_ms: Optional[int] = None
+    status: str = "generated"
+    error_message: Optional[str] = None
+
+
+class FeedbackEmail(FeedbackEmailCreate):
+    """Complete feedback email model."""
+    id: int
+    sent_at: Optional[datetime] = None
+    delivery_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    class Config:
+        from_attributes = True

@@ -33,7 +33,8 @@ from database.models_v2 import (
     JobDescription,
     JobDescriptionCreate,
     MatchHistoryCreate,
-    MatchResultResponse
+    MatchResultResponse,
+    FeedbackEmailCreate
 )
 from embeddings.bert_embedder_v2 import get_section_embedder
 from ranking.education_matcher import check_education_match, normalize_education
@@ -300,7 +301,7 @@ Rules:
         elif result["final_score"] >= 40:
             result["zone"] = "BORDERLINE"
         else:
-            result["zone"] = "POOR_MATCH"
+            result["zone"] = "REJECTED"
 
         logger.success(f"Single resume scored: {result['final_score']}/100 ({result['zone']})")
 
@@ -311,7 +312,7 @@ Rules:
         zone_colors = {
             "SELECTED": "\033[92m",      # Green
             "BORDERLINE": "\033[93m",    # Yellow
-            "POOR_MATCH": "\033[91m"     # Red
+            "REJECTED": "\033[91m"        # Red
         }
         reset = "\033[0m"
 
@@ -772,23 +773,24 @@ Rules:
     def classify_candidates(
         self,
         results: List[Dict[str, Any]],
-        selected_threshold: float = 75.0,
-        borderline_threshold: float = 40.0
+        selected_percentile: float = 10.0,
+        borderline_percentile: float = 40.0
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Classify candidates into zones based on their scores.
+        Classify candidates into zones based on PERCENTILE ranking.
 
         Args:
             results: List of scored candidates
-            selected_threshold: Minimum score for SELECTED zone (default: 75)
-            borderline_threshold: Minimum score for BORDERLINE zone (default: 40)
+            selected_percentile: Top X% are SELECTED (default: 10%)
+            borderline_percentile: Next Y% are BORDERLINE/feedback (default: 40%)
+            (Remaining 50% are REJECTED)
 
         Returns:
-            Dict with 'selected', 'borderline', 'poor_match' lists
+            Dict with 'selected', 'borderline', 'rejected' lists
         """
         classifier = ZoneClassifier(
-            selected_threshold=selected_threshold,
-            borderline_threshold=borderline_threshold
+            selected_percentile=selected_percentile,
+            borderline_percentile=borderline_percentile
         )
 
         # Prepare candidates for classification (use final_score)
@@ -816,6 +818,85 @@ Rules:
     ) -> List[Dict[str, Any]]:
         """Get borderline candidates (for feedback generation)."""
         return classified_results.get("borderline", [])
+
+    def save_classification_to_db(
+        self,
+        classified_results: Dict[str, List[Dict[str, Any]]],
+        job_id: UUID
+    ) -> Dict[str, int]:
+        """
+        Save classification results to database:
+        1. Update match_history status for all candidates
+        2. Insert feedback candidates into feedback_emails table
+
+        Args:
+            classified_results: Dict with 'selected', 'borderline', 'rejected' lists
+            job_id: Job UUID
+
+        Returns:
+            Dict with counts of updated records
+        """
+        logger.info("Saving classification results to database...")
+
+        stats = {
+            "status_updated": 0,
+            "feedback_emails_created": 0,
+            "feedback_emails_skipped": 0
+        }
+
+        # Map zone names to DB status enum values
+        zone_to_status = {
+            "selected": "selected",
+            "borderline": "feedback",
+            "rejected": "rejected"
+        }
+
+        # Process each zone
+        for zone in ["selected", "borderline", "rejected"]:
+            candidates = classified_results.get(zone, [])
+            status = zone_to_status[zone]
+
+            for candidate in candidates:
+                applicant_id = UUID(candidate.get("applicant_id"))
+
+                # 1. Update match_history status
+                if self.db.update_match_history_status(applicant_id, job_id, status):
+                    stats["status_updated"] += 1
+
+                # 2. For borderline/feedback candidates, create feedback_emails entry
+                if zone == "borderline":
+                    # Check if feedback email already exists
+                    if self.db.feedback_email_exists(applicant_id, job_id):
+                        stats["feedback_emails_skipped"] += 1
+                        continue
+
+                    # Get match_history_id
+                    match_history_id = self.db.get_match_history_id(applicant_id, job_id)
+
+                    # Create feedback email record (pending generation)
+                    from decimal import Decimal
+                    feedback_data = FeedbackEmailCreate(
+                        applicant_id=applicant_id,
+                        job_id=job_id,
+                        match_history_id=match_history_id,
+                        subject="Pending Generation",
+                        body="Pending Generation",
+                        recipient_email=candidate.get("email", ""),
+                        recipient_name=candidate.get("name"),
+                        match_score=Decimal(str(candidate.get("final_score", 0) / 100)),
+                        status="pending"
+                    )
+
+                    if self.db.create_feedback_email(feedback_data):
+                        stats["feedback_emails_created"] += 1
+
+        logger.success(
+            f"Classification saved: {stats['status_updated']} statuses updated, "
+            f"{stats['feedback_emails_created']} feedback emails created, "
+            f"{stats['feedback_emails_skipped']} skipped (already exist)"
+        )
+
+        return stats
 
 
 def main():
@@ -875,6 +956,14 @@ def main():
     print("\n[ZONE CLASSIFICATION]")
     classified = pipeline.classify_candidates(results)
     pipeline.print_zone_classification(classified)
+
+    # Save classification to database
+    print("\n[DB] Saving classification to database...")
+    save_stats = pipeline.save_classification_to_db(classified, job_id)
+    print(f"   Statuses updated: {save_stats['status_updated']}")
+    print(f"   Feedback emails created: {save_stats['feedback_emails_created']}")
+    if save_stats['feedback_emails_skipped'] > 0:
+        print(f"   Skipped (already exist): {save_stats['feedback_emails_skipped']}")
 
     # Get borderline candidates for feedback (for later use)
     borderline = pipeline.get_borderline_candidates(classified)

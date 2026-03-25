@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 """
 Workflow 2: Resume Scoring Pipeline CLI
-Scores applicants against job descriptions using integrated scoring.
+Scores applicants against job descriptions using combined or integrated scoring.
 
 Usage:
+    # Score all applicants with COMBINED scoring (Cosine 40% + ATS 60%):
+    python main.py --combined
+
     # Score all applicants against existing job description in DB:
     python main.py
 
@@ -35,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "workflow_1_preprocessing"
 
 from loguru import logger
 from integrated_scoring import IntegratedScoringPipeline
+from ats_ranking import ATSRankingSystem
 
 
 def parse_resume_file(file_path: Path) -> str:
@@ -129,22 +133,32 @@ Examples:
         help="Disable LLM-based ATS scoring (use cosine similarity only)"
     )
     parser.add_argument(
+        "--combined",
+        action="store_true",
+        help="Use COMBINED scoring: Cosine (40%%) + ATS (60%%) with pre-computed data"
+    )
+    parser.add_argument(
+        "--job-id",
+        type=str,
+        help="Job UUID to score against (required with --combined)"
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=15,
         help="Number of top candidates to display (default: 15)"
     )
     parser.add_argument(
-        "--selected-threshold",
+        "--selected-percentile",
         type=float,
-        default=75.0,
-        help="Score threshold for SELECTED zone (default: 75)"
+        default=10.0,
+        help="Top X%% of candidates are SELECTED (default: 10)"
     )
     parser.add_argument(
-        "--borderline-threshold",
+        "--borderline-percentile",
         type=float,
         default=40.0,
-        help="Score threshold for BORDERLINE zone (default: 40)"
+        help="Next Y%% of candidates get FEEDBACK (default: 40)"
     )
 
     args = parser.parse_args()
@@ -348,16 +362,24 @@ Examples:
 
     # Zone Classification
     print("\n" + "=" * 70)
-    print("[ZONE] CANDIDATE ZONE CLASSIFICATION")
-    print(f"   Thresholds: Selected >= {args.selected_threshold}, Borderline >= {args.borderline_threshold}")
+    print("[ZONE] CANDIDATE ZONE CLASSIFICATION (Percentile-Based)")
+    print(f"   Top {args.selected_percentile}% SELECTED, Next {args.borderline_percentile}% FEEDBACK, Rest REJECTED")
     print("=" * 70)
 
     classified = pipeline.classify_candidates(
         results,
-        selected_threshold=args.selected_threshold,
-        borderline_threshold=args.borderline_threshold
+        selected_percentile=args.selected_percentile,
+        borderline_percentile=args.borderline_percentile
     )
     pipeline.print_zone_classification(classified)
+
+    # Save classification to database (update status + create feedback emails)
+    print("\n[DB] Saving classification to database...")
+    save_stats = pipeline.save_classification_to_db(classified, job_id)
+    print(f"   Statuses updated: {save_stats['status_updated']}")
+    print(f"   Feedback emails created: {save_stats['feedback_emails_created']}")
+    if save_stats['feedback_emails_skipped'] > 0:
+        print(f"   Skipped (already exist): {save_stats['feedback_emails_skipped']}")
 
     # Get borderline candidates for feedback
     borderline = pipeline.get_borderline_candidates(classified)
@@ -377,11 +399,11 @@ Examples:
     print(f"\n[ZONE SUMMARY]")
     print(f"   Selected: {summary.get('selected_count', 0)} candidates (moving to interview)")
     print(f"   Borderline: {summary.get('borderline_count', 0)} candidates (will receive feedback)")
-    print(f"   Poor Match: {summary.get('poor_match_count', 0)} candidates (no action)")
+    print(f"   Rejected: {summary.get('rejected_count', 0)} candidates (no action)")
 
     if borderline:
-        print(f"\n[NEXT STEP] {len(borderline)} borderline candidates can receive feedback emails")
-        print("   (Feedback generation and email integration to be added)")
+        print(f"\n[NEXT STEP] {len(borderline)} borderline candidates have pending feedback emails")
+        print("   Run workflow 3 to generate email content for these candidates")
 
     return results, classified
 

@@ -18,7 +18,8 @@ from database.models_v2 import (
     JobDescription, JobDescriptionCreate,
     JobEmbedding, JobEmbeddingCreate,
     MatchHistory, MatchHistoryCreate,
-    ScoringConfig
+    ScoringConfig,
+    FeedbackEmail, FeedbackEmailCreate
 )
 
 
@@ -462,6 +463,117 @@ class SupabaseClientV2:
             logger.error(f"Error creating match history: {e}")
             return None
     
+    def create_feedback_email(
+        self,
+        feedback_data: FeedbackEmailCreate
+    ) -> Optional[FeedbackEmail]:
+        """Create a feedback email record."""
+        try:
+            data = {
+                "applicant_id": str(feedback_data.applicant_id),
+                "job_id": str(feedback_data.job_id),
+                "match_history_id": feedback_data.match_history_id,
+                "subject": feedback_data.subject,
+                "body": feedback_data.body,
+                "recipient_email": feedback_data.recipient_email,
+                "recipient_name": feedback_data.recipient_name,
+                "match_score": float(feedback_data.match_score) if feedback_data.match_score is not None else None,
+                "llm_model": feedback_data.llm_model,
+                "generation_time_ms": feedback_data.generation_time_ms,
+                "status": feedback_data.status,
+                "error_message": feedback_data.error_message,
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat()
+            }
+
+            # Remove keys with None values to let DB defaults apply
+            data = {k: v for k, v in data.items() if v is not None}
+
+            result = self._client.table("feedback_emails").insert(data).execute()
+
+            if result.data:
+                return FeedbackEmail(**result.data[0])
+            return None
+
+        except Exception as e:
+            logger.error(f"Error creating feedback email: {e}")
+            return None
+
+    def update_match_history_status(
+        self,
+        applicant_id: UUID,
+        job_id: UUID,
+        status: str
+    ) -> bool:
+        """
+        Update the status of a match_history record.
+
+        Args:
+            applicant_id: Applicant UUID
+            job_id: Job UUID
+            status: One of 'selected', 'feedback', 'rejected'
+
+        Returns:
+            True if successful
+        """
+        try:
+            result = self._client.table("match_history").update({
+                "status": status
+            }).eq(
+                "applicant_id", str(applicant_id)
+            ).eq(
+                "job_id", str(job_id)
+            ).execute()
+
+            if result.data:
+                logger.info(f"Updated match_history status for {applicant_id}: {status}")
+                return True
+            return False
+
+        except Exception as e:
+            logger.error(f"Error updating match_history status: {e}")
+            return False
+
+    def get_match_history_id(
+        self,
+        applicant_id: UUID,
+        job_id: UUID
+    ) -> Optional[int]:
+        """Get match_history ID for an applicant-job pair."""
+        try:
+            result = self._client.table("match_history").select("id").eq(
+                "applicant_id", str(applicant_id)
+            ).eq(
+                "job_id", str(job_id)
+            ).execute()
+
+            if result.data:
+                return result.data[0]["id"]
+            return None
+
+        except Exception as e:
+            logger.error(f"Error fetching match_history ID: {e}")
+            return None
+
+    def feedback_email_exists(
+        self,
+        applicant_id: UUID,
+        job_id: UUID
+    ) -> bool:
+        """Check if a feedback email already exists for this applicant-job pair."""
+        try:
+            result = self._client.table("feedback_emails").select("id").eq(
+                "applicant_id", str(applicant_id)
+            ).eq(
+                "job_id", str(job_id)
+            ).execute()
+
+            return bool(result.data)
+
+        except Exception as e:
+            logger.error(f"Error checking feedback email existence: {e}")
+            return False
+
     # ========================================================================
     # Query Operations
     # ========================================================================
