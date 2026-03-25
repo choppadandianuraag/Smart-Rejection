@@ -485,7 +485,7 @@ Rules:
         skills_score = self._compute_skills_score(jd_skills, resume_skills, resume_text)
 
         # 2. Experience scoring (25% of ATS)
-        experience_score = self._compute_experience_score(jd_experience, resume_experience)
+        experience_score = self._compute_experience_score(jd_experience, resume_experience, resume_text)
 
         # 3. Education scoring (15% of ATS)
         education_score = self._compute_education_score(jd_education, resume_education)
@@ -590,6 +590,10 @@ Rules:
         """Compute skills match score."""
         category_scores = {}
 
+        # Normalize resume skills for better matching
+        resume_skills_lower = [s.lower().strip() for s in resume_skills if isinstance(s, str)]
+        resume_text_lower = resume_text.lower()
+
         for category in ["must_have", "good_to_have", "nice_to_have"]:
             requirements = jd_skills.get(category, [])
             if not requirements:
@@ -605,15 +609,40 @@ Rules:
                 req_emb = self.embedder.embed_text(req)
                 similarity = self._cosine_similarity(req_emb, resume_emb)
 
-                # Keyword bonus
+                # Enhanced keyword matching - check both directions
                 req_lower = req.lower()
-                keyword_bonus = 0
-                for skill in resume_skills:
-                    if isinstance(skill, str) and skill.lower() in req_lower:
-                        keyword_bonus = 0.15
+                keyword_match = False
+
+                # Extract key terms from requirement (split by common delimiters)
+                req_terms = [t.strip() for t in req_lower.replace(',', ' ').replace('/', ' ').replace('(', ' ').replace(')', ' ').split() if len(t) > 2]
+
+                # Check if any resume skill matches requirement terms
+                for skill in resume_skills_lower:
+                    # Direct match: skill in requirement or requirement term in skill
+                    if skill in req_lower or any(term in skill for term in req_terms if len(term) > 3):
+                        keyword_match = True
+                        break
+                    # Check if requirement contains the skill
+                    if any(skill in term or term in skill for term in req_terms):
+                        keyword_match = True
                         break
 
-                total_score += min(1.0, similarity + keyword_bonus)
+                # Also check against full resume text for common tech terms
+                common_tech = ["python", "fastapi", "postgresql", "docker", "aws", "kubernetes",
+                              "openai", "llm", "embedding", "vector", "supabase", "ci/cd", "rest api"]
+                for tech in common_tech:
+                    if tech in req_lower and tech in resume_text_lower:
+                        keyword_match = True
+                        break
+
+                # Apply bonus based on match type
+                if keyword_match:
+                    # Strong keyword match - boost score significantly
+                    final_score = max(similarity + 0.4, 0.85)  # At least 85% if keyword matches
+                else:
+                    final_score = similarity
+
+                total_score += min(1.0, final_score)
 
             category_scores[category] = total_score / len(requirements)
 
@@ -626,12 +655,37 @@ Rules:
     def _compute_experience_score(
         self,
         jd_experience: Dict[str, Any],
-        resume_experience: Dict[str, Any]
+        resume_experience: Dict[str, Any],
+        resume_text: str = ""
     ) -> float:
         """Compute experience match score."""
+        import re
+
         min_years = jd_experience.get("min_years", 0)
         preferred_years = jd_experience.get("preferred_years", min_years)
         candidate_years = resume_experience.get("total_years", 0)
+
+        # Fallback: extract years from resume text if LLM returned 0
+        if candidate_years == 0 and resume_text:
+            text_lower = resume_text.lower()
+            # Look for patterns like "5+ years", "5 years", etc.
+            year_patterns = [
+                r'(\d+)\+?\s*years?\s+(?:of\s+)?(?:experience|exp)',
+                r'(\d+)\+?\s*years?\s+(?:in\s+)?(?:backend|python|software|development)',
+                r'experience[:\s]+(\d+)\+?\s*years?',
+                r'(\d+)\+?\s*years?\s+professional',
+            ]
+            for pattern in year_patterns:
+                matches = re.findall(pattern, text_lower)
+                if matches:
+                    candidate_years = max(candidate_years, max(int(m) for m in matches))
+
+            # Also check for date ranges (2020 - Present means ~4-5 years)
+            if candidate_years == 0:
+                date_ranges = re.findall(r'20(\d{2})\s*[-–]\s*(?:present|current|now|20\d{2})', text_lower)
+                if date_ranges:
+                    oldest_year = min(int(y) for y in date_ranges)
+                    candidate_years = max(1, 26 - oldest_year)  # 2026 - start year
 
         # Years scoring (40%)
         if min_years == 0:
@@ -650,10 +704,19 @@ Rules:
         resume_domains = resume_experience.get("domains", [])
         resume_titles = resume_experience.get("job_titles", [])
 
+        # Fallback: extract job titles from resume text
+        if not resume_domains and not resume_titles and resume_text:
+            common_titles = ["backend engineer", "software engineer", "senior engineer",
+                           "ai engineer", "python developer", "data scientist", "ml engineer",
+                           "senior ai backend engineer", "senior backend engineer"]
+            for title in common_titles:
+                if title in resume_text.lower():
+                    resume_titles.append(title)
+
         if not jd_domains:
             domain_score = 1.0
         else:
-            resume_domain_text = " ".join(resume_domains + resume_titles)
+            resume_domain_text = " ".join(resume_domains + resume_titles) if (resume_domains or resume_titles) else resume_text[:500]
             if not resume_domain_text:
                 domain_score = 0.3
             else:
