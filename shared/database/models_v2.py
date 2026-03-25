@@ -73,7 +73,7 @@ class ApplicantEmbeddingCreate(BaseModel):
 
 class ApplicantEmbedding(BaseModel):
     """Complete applicant embedding model (flat structure)."""
-    id: int
+    id: Optional[int] = None  # Made optional for V1 compatibility
     applicant_id: UUID
 
     # Section texts

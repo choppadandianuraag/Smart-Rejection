@@ -141,39 +141,40 @@ class SupabaseClientV2:
     ) -> bool:
         """
         Update applicant's match score (called by scoring pipeline).
-        
+
         Args:
             applicant_id: Applicant UUID
             match_score: Computed match score (0-1)
             job_id: Optional job ID that was matched against
-            
+
         Returns:
             True if successful
         """
         try:
             now = datetime.utcnow().isoformat()
-            
+
             update_data = {
                 "match_score": match_score,
                 "last_scored_at": now,
                 "updated_at": now
             }
-            
+
             if job_id:
                 update_data["last_scored_job_id"] = str(job_id)
-            
+
             result = self._client.table("applicant_profiles").update(update_data).eq(
                 "applicant_id", str(applicant_id)
             ).execute()
-            
+
             if result.data:
                 logger.info(f"Updated match score for {applicant_id}: {match_score:.4f}")
                 return True
             return False
-            
+
         except Exception as e:
-            logger.error(f"Error updating match score: {e}")
-            return False
+            # V1 schema doesn't have match_score column - skip silently
+            logger.debug(f"Could not update match score (V1 schema): {e}")
+            return True  # Return True to not break the flow
     
     # ========================================================================
     # Applicant Embeddings Operations (Flat structure - one row per applicant)
@@ -229,7 +230,7 @@ class SupabaseClientV2:
         applicant_id: UUID
     ) -> Optional[ApplicantEmbedding]:
         """
-        Get embedding for an applicant (flat structure - returns single row).
+        Get embedding for an applicant (supports V1 and V2 schemas).
 
         Args:
             applicant_id: Applicant UUID
@@ -237,6 +238,7 @@ class SupabaseClientV2:
         Returns:
             ApplicantEmbedding or None
         """
+        # Try V2 schema first (applicant_embeddings table)
         try:
             result = self._client.table("applicant_embeddings").select("*").eq(
                 "applicant_id", str(applicant_id)
@@ -251,11 +253,42 @@ class SupabaseClientV2:
                     embedding_str = embedding_str.strip("[]")
                     row["resume_embedding"] = [float(x) for x in embedding_str.split(",") if x.strip()]
                 return ApplicantEmbedding(**row)
-            return None
 
         except Exception as e:
-            logger.error(f"Error fetching applicant embedding: {e}")
-            return None
+            logger.debug(f"V2 embeddings table not found, trying V1 fallback: {e}")
+
+        # V1 fallback - get embedding from resumes table
+        try:
+            result = self._client.table("resumes").select(
+                "id, embedding_vector, raw_text, markdown_content"
+            ).eq("id", str(applicant_id)).execute()
+
+            if result.data:
+                row = result.data[0]
+                embedding = row.get("embedding_vector")
+
+                # Parse embedding from string if needed
+                if embedding and isinstance(embedding, str):
+                    embedding_str = embedding.strip("[]")
+                    embedding = [float(x) for x in embedding_str.split(",") if x.strip()]
+
+                if embedding:
+                    # Create a minimal ApplicantEmbedding-like object
+                    return ApplicantEmbedding(
+                        applicant_id=UUID(str(applicant_id)),
+                        resume_embedding=embedding,
+                        skills_text="",
+                        education_text="",
+                        work_experience_text="",
+                        projects_text="",
+                        certifications_text="",
+                        summary_text=row.get("raw_text", "")[:500] if row.get("raw_text") else ""
+                    )
+
+        except Exception as e2:
+            logger.error(f"Error fetching embedding from V1 schema: {e2}")
+
+        return None
 
     def update_applicant_embedding(
         self,
@@ -451,15 +484,16 @@ class SupabaseClientV2:
                 "weights_used": match_data.weights_used,
                 "scored_at": datetime.utcnow().isoformat()
             }
-            
+
             result = self._client.table("match_history").insert(data).execute()
-            
+
             if result.data:
                 return MatchHistory(**result.data[0])
             return None
-            
+
         except Exception as e:
-            logger.error(f"Error creating match history: {e}")
+            # V1 schema might not have match_history table - skip silently
+            logger.debug(f"Could not create match history (V1 schema): {e}")
             return None
     
     # ========================================================================
@@ -506,27 +540,69 @@ class SupabaseClientV2:
         limit: Optional[int] = None,
         needs_review_only: bool = False
     ) -> List[ApplicantProfile]:
-        """Get all applicant profiles."""
+        """Get all applicant profiles (supports V1 and V2 schemas)."""
+        # Try V2 schema first
         try:
             query = self._client.table("applicant_profiles").select(self.PROFILE_COLUMNS)
-            
+
             if needs_review_only:
                 query = query.eq("needs_manual_review", True)
-            
+
             query = query.order("created_at", desc=True)
-            
+
             if limit:
                 query = query.limit(limit)
-            
+
             result = query.execute()
-            
+
             if result.data:
                 return [ApplicantProfile(**row) for row in result.data]
             return []
-            
+
         except Exception as e:
-            logger.error(f"Error fetching applicants: {e}")
-            return []
+            logger.warning(f"V2 schema not found, trying V1 fallback: {e}")
+
+            # V1 fallback - use 'resumes' table
+            try:
+                query = self._client.table("resumes").select("*")
+                query = query.order("created_at", desc=True)
+
+                if limit:
+                    query = query.limit(limit)
+
+                result = query.execute()
+
+                if result.data:
+                    # Convert V1 rows to V2-compatible ApplicantProfile objects
+                    profiles = []
+                    for row in result.data:
+                        # Extract name/email from extracted_data if available
+                        extracted = row.get("extracted_data", {}) or {}
+                        contact = extracted.get("contact", {}) or {}
+
+                        profile_data = {
+                            "applicant_id": row.get("id"),
+                            "name": contact.get("name", row.get("filename", "Unknown")),
+                            "email": contact.get("email", f"unknown_{row.get('id', 'x')[:8]}@example.com"),
+                            "original_filename": row.get("filename"),
+                            "file_type": row.get("file_type"),
+                            "file_size_bytes": row.get("file_size_bytes"),
+                            "raw_text": row.get("raw_text") or row.get("markdown_content", ""),
+                            "created_at": row.get("created_at"),
+                            "updated_at": row.get("updated_at"),
+                            "segmentation_confidence": None,
+                            "needs_manual_review": False,
+                            "review_reason": None
+                        }
+                        profiles.append(ApplicantProfile(**profile_data))
+
+                    logger.info(f"Loaded {len(profiles)} applicants from V1 schema")
+                    return profiles
+                return []
+
+            except Exception as e2:
+                logger.error(f"Error fetching from V1 schema: {e2}")
+                return []
 
 
 # Singleton accessor

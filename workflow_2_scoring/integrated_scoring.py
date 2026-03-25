@@ -376,13 +376,22 @@ Rules:
             try:
                 logger.info(f"  [{i:02d}/{len(applicants)}] Scoring {applicant.name}...")
 
-                # Get applicant embedding
+                # Get applicant embedding (or generate on-the-fly from raw_text)
                 applicant_emb = self.db.get_applicant_embedding(applicant.applicant_id)
 
                 # Calculate cosine similarity
                 cosine_score = 0.0
+                resume_emb = None
+
+                # First try stored embedding
                 if applicant_emb and applicant_emb.resume_embedding and jd_embedding is not None:
                     resume_emb = np.array(applicant_emb.resume_embedding)
+                # If no stored embedding, generate on-the-fly from raw_text
+                elif applicant.raw_text and jd_embedding is not None:
+                    logger.debug(f"  Generating embedding on-the-fly for {applicant.name}")
+                    resume_emb = self.embedder.embed_text(applicant.raw_text)
+
+                if resume_emb is not None and jd_embedding is not None:
                     cosine_score = self._cosine_similarity(resume_emb, jd_embedding)
 
                 # Calculate ATS score
@@ -718,11 +727,24 @@ Rules:
 
     def get_job_descriptions(self) -> List[Dict[str, Any]]:
         """Fetch all job descriptions from database."""
-        result = self.db.client.table("job_descriptions").select(
-            "job_id, title, company, description, raw_text, is_active"
-        ).eq("is_active", True).execute()
-
-        return result.data if result.data else []
+        # Try V2 schema first, fallback to V1
+        try:
+            result = self.db.client.table("job_descriptions").select(
+                "job_id, title, company, description, raw_text, is_active"
+            ).eq("is_active", True).execute()
+            return result.data if result.data else []
+        except Exception:
+            # V1 schema fallback (uses 'id' instead of 'job_id')
+            result = self.db.client.table("job_descriptions").select(
+                "id, title, company, description"
+            ).execute()
+            # Normalize to V2 format
+            if result.data:
+                for row in result.data:
+                    row['job_id'] = row.pop('id', None)
+                    row['raw_text'] = row.get('description', '')
+                    row['is_active'] = True
+            return result.data if result.data else []
 
     def print_rankings(self, results: List[Dict[str, Any]], top_k: int = 15):
         """Print formatted ranking results."""
